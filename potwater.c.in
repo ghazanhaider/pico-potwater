@@ -1,0 +1,126 @@
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "pico/cyw43_arch.h"
+#include "lwip/apps/http_client.h"
+#include "wifi.h"
+//#include "temp.h"
+#include "http_post.h"
+
+#define WIFI_TIMEOUT 11000
+#define TIMER_INTERVAL -10000 // In milliseconds. Minus means from start of callback
+#define BSSID 0xF4BEEC579876
+
+// ============== Config and global variables
+
+const uint DHT_PIN = 15; // GPIO pin (not board pin)
+
+char myBuff[200];
+
+char payload[30];
+const char* auth_token="@AUTH_TOKEN@";
+uint16_t port=22222;
+const char* uri="influxdb.ghazan.dev";
+uint8_t bssid[] = {0xf0, 0x21, 0xe0, 0xb8, 0x74, 0x46};
+//{0xF4,0xBE,0xEC,0x57,0x98,0x76};//{0x76,0x98,0x57,0xEC,0xBE,0xF4};
+
+//dht_reading reading;
+
+char ssid[] = "@WIFI_SSID@";
+char pass[] = "@WIFI_PASSWORD@";
+uint32_t country = CYW43_COUNTRY_WORLDWIDE; //CYW43_COUNTRY_WORLDWIDE;
+uint32_t auth = CYW43_AUTH_WPA2_MIXED_PSK; //CYW43_AUTH_WPA2_MIXED_PSK;
+
+
+// ============== http_client() callback functions
+
+void result(void *arg, httpc_result_t httpc_result,
+        u32_t rx_content_len, u32_t srv_res, err_t err)
+{
+    puts("RESULT\n");
+    printf("local result=%d\n", httpc_result);
+    printf("http result=%d\n", srv_res);
+    puts("DONE\n");
+}
+
+err_t headers(httpc_state_t *connection, void *arg, 
+    struct pbuf *hdr, u16_t hdr_len, u32_t content_len)
+{
+    puts("HEADERS recieved\n");
+    printf("content length=%d\n", content_len);
+    printf("header length %d\n", hdr_len);
+    pbuf_copy_partial(hdr, myBuff, hdr->tot_len, 0);
+    puts("headers \n");
+    printf("%s", myBuff);
+    puts("DONE\n");
+    return ERR_OK;
+}
+
+err_t body(void *arg, struct altcp_pcb *conn, 
+                            struct pbuf *p, err_t err)
+{
+    printf("BODY\n");
+    pbuf_copy_partial(p, myBuff, p->tot_len, 0);
+    printf("%s", myBuff);
+    puts("DONE\n");
+    return ERR_OK;
+}
+
+// ================= Timer Callback (Repeats)
+
+bool repeating_timer_callback(struct repeating_timer *t) {
+	printf("Timer called\n");
+	int error;
+
+	//printf("Enabling station mode\n");
+	//cyw43_arch_enable_sta_mode();
+
+        httpc_connection_t settings;
+        settings.result_fn = result;
+        settings.headers_done_fn = headers;
+
+	//cyw43_wifi_get_bssid(&cyw43_state,bssid);
+	//printf("BSSID is: %x %x %x %x %x %x\n",bssid[0],bssid[1],bssid[2],bssid[3],bssid[4],bssid[5]);
+
+//        snprintf(payload, sizeof(payload), "plantwater t=%.1f h=%.1f",reading.temp_celsius,reading.humidity);
+        snprintf(payload, sizeof(payload), "plantwater t=%.1f h=%.1f",123.45,67.890);
+
+//        err_t err = httpc_post_file_dns(
+        err_t err = httpc_get_file_dns(
+            uri,
+            port,
+            "@SECRET_URI@",
+//            payload,
+//            auth_token,
+            &settings,
+            body,
+            NULL,
+            NULL
+        );
+
+        printf("Post done. Http status: %d\n",err);
+        return true;
+}
+
+
+// ================= Main()
+
+int main()
+{
+    uint8_t addr;
+    static struct repeating_timer timer;
+
+    stdio_init_all();
+    printf("\n\nInitializing...");
+
+    //add_repeating_timer_ms(TIMER_INTERVAL, repeating_timer_callback, NULL, &timer);
+    //gpio_init(DHT_PIN);
+   
+    setup(country, ssid, pass, auth,
+                "PlantWater", NULL, NULL, NULL);
+
+    add_repeating_timer_ms(TIMER_INTERVAL, repeating_timer_callback, NULL, &timer);
+    printf("Initialization complete. Sleeping\n");
+    while (true) tight_loop_contents();
+}
+
+
