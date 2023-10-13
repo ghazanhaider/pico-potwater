@@ -1,7 +1,9 @@
-typedef struct {
+struct dht_reading {
     float humidity;
     float temp_celsius;
-} dht_reading;
+};
 
-void read_temp(dht_reading *, uint);
+struct data_t;
+
+void read_temp(struct dht_reading *, uint);
 

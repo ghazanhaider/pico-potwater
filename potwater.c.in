@@ -1,29 +1,50 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
-#include "lwip/apps/http_client.h"
+#include "lwip/pbuf.h"
+#include "lwip/tcp.h"
+#include "lwip/priv/tcp_priv.h"
+#include "lwip/dns.h"
+#include "hardware/timer.h"
+#include "hardware/adc.h"
 #include "wifi.h"
-//#include "temp.h"
-#include "http_post.h"
+#include "temp.h"
+#include "http_headers.h"
 
-#define WIFI_TIMEOUT 11000
-#define TIMER_INTERVAL -10000 // In milliseconds. Minus means from start of callback
-#define BSSID 0xF4BEEC579876
+#if !defined(REMOTE_HOST)
+#error REMOTE_HOST not defined
+#endif
+
+#if !defined(REMOTE_PORT)
+#error REMOTE_PORT not defined
+#endif
+
+#if !defined(REMOTE_URL)
+#define REMOTE_URL /
+#endif
+
+#if !defined(AUTH_TOKEN)
+#error AUTH_TOKEN not defined
+#endif
+
+#define TIMER_DELAY 10000	// In milliseconds
 
 // ============== Config and global variables
 
-const uint DHT_PIN = 15; // GPIO pin (not board pin)
+#define DHT_PIN 15			// GPIO pin (not board pin)
 
-char myBuff[200];
 
-char payload[30];
-const char* auth_token="@AUTH_TOKEN@";
-uint16_t port=22222;
-const char* uri="influxdb.ghazan.dev";
-uint8_t bssid[] = {0xf0, 0x21, 0xe0, 0xb8, 0x74, 0x46};
-//{0xF4,0xBE,0xEC,0x57,0x98,0x76};//{0x76,0x98,0x57,0xEC,0xBE,0xF4};
+// Single struct to pass around to callbacks and avoid global variables
 
-//dht_reading reading;
+struct data_t {
+	float onboard_temp;		// PICO internal temp
+	struct dht_reading reading;	// DHT sensor
+	struct tcp_pcb *pcb;		// TCP client pcb
+	ip_addr_t remote_ip;
+	char header[300];			// HTTP header
+	char payload[30];			// Data string payload
+};
+
 
 char ssid[] = "@WIFI_SSID@";
 char pass[] = "@WIFI_PASSWORD@";
@@ -31,74 +52,118 @@ uint32_t country = CYW43_COUNTRY_WORLDWIDE; //CYW43_COUNTRY_WORLDWIDE;
 uint32_t auth = CYW43_AUTH_WPA2_MIXED_PSK; //CYW43_AUTH_WPA2_MIXED_PSK;
 
 
-// ============== http_client() callback functions
+// ================= Measurement functions
 
-void result(void *arg, httpc_result_t httpc_result,
-        u32_t rx_content_len, u32_t srv_res, err_t err)
-{
-    puts("RESULT\n");
-    printf("local result=%d\n", httpc_result);
-    printf("http result=%d\n", srv_res);
-    puts("DONE\n");
+float read_onboard_temp(void) {
+	const float conversionFactor = 3.3f / (1 << 12);
+	float adc = (float)adc_read() * conversionFactor;
+	float tempC = 27.0f - (adc - 0.706f) / 0.001721f;
+	printf("Onboard temp: %.02f\n",tempC);
+	return tempC;
 }
 
-err_t headers(httpc_state_t *connection, void *arg, 
-    struct pbuf *hdr, u16_t hdr_len, u32_t content_len)
-{
-    puts("HEADERS recieved\n");
-    printf("content length=%d\n", content_len);
-    printf("header length %d\n", hdr_len);
-    pbuf_copy_partial(hdr, myBuff, hdr->tot_len, 0);
-    puts("headers \n");
-    printf("%s", myBuff);
-    puts("DONE\n");
-    return ERR_OK;
+// ================= TCP callbacks
+
+// ====== This callback is called once a TCP connection is made
+err_t tcp_connected_callback(void *arg, struct tcp_pcb *tpcb, err_t err) {
+	struct data_t *data = (struct data_t *) arg;
+	int payload_len = snprintf(data->payload, sizeof(data->payload), "potwater t=%.1f,h=%.1f",data->reading.temp_celsius,data->reading.humidity);
+	//printf("Payload len %d is>%s<\n",payload_len,data->payload);
+	int header_len = snprintf(data->header, sizeof(data->header), HTTP_POST_FORMAT(payload_len));
+	cyw43_arch_lwip_begin();
+	tcp_write(tpcb, data->header, header_len, 0x0);
+	tcp_write(tpcb, data->payload, payload_len, 0x0);
+	tcp_output(tpcb);
+	cyw43_arch_lwip_end();
+	printf("connected() called. Data sent\n");
+	return ERR_OK;
 }
 
-err_t body(void *arg, struct altcp_pcb *conn, 
-                            struct pbuf *p, err_t err)
-{
-    printf("BODY\n");
-    pbuf_copy_partial(p, myBuff, p->tot_len, 0);
-    printf("%s", myBuff);
-    puts("DONE\n");
-    return ERR_OK;
+// ====== This callback is called once data is fully sent
+err_t tcp_sent_callback(void *arg, struct tcp_pcb *tpcb, u16_t len) {
+/*	if (tcp_close(tpcb) != ERR_OK) {
+		tcp_abort(tpcb);
+	}
+	printf("Connection closed\n");*/
+	puts("sent() called");
+	return ERR_OK;
 }
 
-// ================= Timer Callback (Repeats)
+// ====== This callback is called with server headers/status received
+err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf * p,err_t err) {
+	struct data_t *data = (struct data_t *) arg;
+	printf("recv() called. ");
+	if (p) {
+		puts("data");
+		tcp_recved(data->pcb,p->tot_len);
+		pbuf_free(p);
+		return ERR_OK;
+	}
+	else {
+		tcp_sent(data->pcb,NULL);
+		tcp_recv(data->pcb,NULL);
+		tcp_arg(data->pcb,NULL);
 
-bool repeating_timer_callback(struct repeating_timer *t) {
-	printf("Timer called\n");
-	int error;
+		printf("tcp_close(). ");
+		if (tcp_close(tpcb) != ERR_OK) {
+			printf("failed, aborting. ");
+			tcp_abort(tpcb);
+			puts("tcp_abort()ed");
+			return ERR_ABRT;
+	    }
+		//pbuf_free(p);
+	    puts("tcp_closed()");
+	}
+	//pbuf_free(p);
+	return ERR_OK;
+}
 
-	//printf("Enabling station mode\n");
-	//cyw43_arch_enable_sta_mode();
+// ====== This callback is called once DNS resolves the remote hostname
 
-        httpc_connection_t settings;
-        settings.result_fn = result;
-        settings.headers_done_fn = headers;
+void dns_found(const char *name, const ip_addr_t *ipaddr, void *arg) {
+	struct data_t *data = (struct data_t *) arg;
+	data->remote_ip = * ipaddr;
+	printf("dns_found() called. Connecting to %s port @REMOTE_PORT@\n",ip4addr_ntoa(ipaddr));
+    cyw43_arch_lwip_begin();
+    tcp_connect(data->pcb,ipaddr,atoi(REMOTE_PORT),tcp_connected_callback);
+    cyw43_arch_lwip_end();
+}
 
-	//cyw43_wifi_get_bssid(&cyw43_state,bssid);
-	//printf("BSSID is: %x %x %x %x %x %x\n",bssid[0],bssid[1],bssid[2],bssid[3],bssid[4],bssid[5]);
+// ================= Repeating loop
 
-//        snprintf(payload, sizeof(payload), "plantwater t=%.1f h=%.1f",reading.temp_celsius,reading.humidity);
-        snprintf(payload, sizeof(payload), "plantwater t=%.1f h=%.1f",123.45,67.890);
+void upload(struct data_t * data) {
+	err_t err;
+	printf("Upload() called\n");
+	data->pcb = tcp_new();
+	tcp_sent(data->pcb, tcp_sent_callback);
+	tcp_recv(data->pcb, tcp_recv_callback);
+	tcp_arg(data->pcb, data);
+/*
+	ip4addr_aton("52.44.20.160",&data->remote_ip);
+	dns_found(NULL,&data->remote_ip,data);
+*/
+	printf("DNS resolving host %s dnserver: %s: ",REMOTE_HOST,ip4addr_ntoa(dns_getserver(0)));
+	cyw43_arch_lwip_begin();
+	err = dns_gethostbyname_addrtype(REMOTE_HOST,&data->remote_ip,dns_found,data,LWIP_DNS_ADDRTYPE_IPV4);
+	cyw43_arch_lwip_end();
 
-//        err_t err = httpc_post_file_dns(
-        err_t err = httpc_get_file_dns(
-            uri,
-            port,
-            "@SECRET_URI@",
-//            payload,
-//            auth_token,
-            &settings,
-            body,
-            NULL,
-            NULL
-        );
+	if (err == ERR_OK) {
+		puts("cached");
+		dns_found(NULL,&data->remote_ip,data);
+	} else if (err == ERR_INPROGRESS) {
+		puts("resolution");
+		return;
+	} else if (err == ERR_ARG) {
+		puts("error");
+		return;
+	}
 
-        printf("Post done. Http status: %d\n",err);
-        return true;
+/*	ip4addr_aton("@REMOTE_IP@", &remote_ip);
+	printf("Connecting to %s port @REMOTE_PORT@\n",ip4addr_ntoa(&remote_ip));
+	cyw43_arch_lwip_begin();
+	tcp_connect(pcb,&remote_ip,atoi(REMOTE_PORT),tcp_connected_callback);
+	cyw43_arch_lwip_end();
+        printf("Post done.\n");*/
 }
 
 
@@ -107,20 +172,51 @@ bool repeating_timer_callback(struct repeating_timer *t) {
 int main()
 {
     uint8_t addr;
-    static struct repeating_timer timer;
+    absolute_time_t nextrun;
 
+	struct data_t * data = malloc(sizeof(struct data_t));
+
+    // Stdio/USB init
     stdio_init_all();
     printf("\n\nInitializing...");
 
-    //add_repeating_timer_ms(TIMER_INTERVAL, repeating_timer_callback, NULL, &timer);
-    //gpio_init(DHT_PIN);
+    // DHT init
+    gpio_init(DHT_PIN);
    
+    // Wifi init
     setup(country, ssid, pass, auth,
                 "PlantWater", NULL, NULL, NULL);
 
-    add_repeating_timer_ms(TIMER_INTERVAL, repeating_timer_callback, NULL, &timer);
+    // Onboard temp sensor init
+	adc_init();
+    adc_set_temp_sensor_enabled(true);
+    adc_select_input(4);
+
+    nextrun = make_timeout_time_ms(TIMER_DELAY);
+
     printf("Initialization complete. Sleeping\n");
-    while (true) tight_loop_contents();
+
+	// Big loop
+    while (true) {
+	    sleep_until(nextrun);
+	    nextrun = make_timeout_time_ms(TIMER_DELAY);
+		puts("-------------------");
+		puts("Reading onboard_temp");
+	    data->onboard_temp = read_onboard_temp();
+		puts("Reading DHT11");
+	    read_temp(&data->reading,DHT_PIN);
+	    if (data->reading.temp_celsius == -111) {
+                puts("DHT Bad Data\n");
+            }
+		else {
+			printf("Humidity = %.1f%%, Temperature = %.1fC\n",
+					data->reading.humidity, data->reading.temp_celsius);
+	    }
+	    upload(data);
+		//printf("tcp_listen_pcbs: %d",sizeof(tcp_listen_pcbs));
+		tcp_debug_print_pcbs();
+    }
+
 }
 
 

@@ -70,9 +70,9 @@
 #define IP_REASS_DEBUG              LWIP_DBG_OFF
 #define RAW_DEBUG                   LWIP_DBG_OFF
 #define MEM_DEBUG                   LWIP_DBG_OFF
-#define MEMP_DEBUG                  LWIP_DBG_OFF
+#define MEMP_DEBUG                  LWIP_DBG_ON
 #define SYS_DEBUG                   LWIP_DBG_OFF
-#define TCP_DEBUG                   LWIP_DBG_OFF
+#define TCP_DEBUG                   LWIP_DBG_ON
 #define TCP_INPUT_DEBUG             LWIP_DBG_OFF
 #define TCP_OUTPUT_DEBUG            LWIP_DBG_OFF
 #define TCP_RTO_DEBUG               LWIP_DBG_OFF
@@ -86,5 +86,8 @@
 #define PPP_DEBUG                   LWIP_DBG_OFF
 #define SLIP_DEBUG                  LWIP_DBG_OFF
 #define DHCP_DEBUG                  LWIP_DBG_OFF
-
+#define DNS_MAX_RETRIES			2
+//#define LWIP_DEBUG			1
+//#define LWIP_DEBUG_TIMERNAMES       1
+//#define TIMERS_DEBUG                LWIP_DBG_ON
 #endif /* __LWIPOPTS_H__ */

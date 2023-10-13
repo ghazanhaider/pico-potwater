@@ -5,12 +5,19 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
-#add_executable(potwater potwater.c wifi.c temp.c http_post.c)
-add_executable(potwater potwater.c wifi.c http_post.c)
+add_executable(potwater potwater.c wifi.c temp.c)
+#add_executable(potwater potwater.c wifi.c )
 
 configure_file(potwater.c.in potwater.c)
-configure_file(http_post.h.in http_post.h)
-configure_file(http_post.c.in http_post.c)
+
+target_compile_definitions(potwater PRIVATE
+	WIFI_SSID=\"${WIFI_SSID}\"
+    WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
+	REMOTE_HOST=\"${REMOTE_HOST}\"
+	REMOTE_PORT=\"${REMOTE_PORT}\"
+	REMOTE_URL=\"${REMOTE_URL}\"
+	AUTH_TOKEN=\"${AUTH_TOKEN}\"
+	)
 
 target_include_directories(potwater PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
@@ -21,7 +28,8 @@ target_include_directories(potwater PRIVATE
 #		PICO_STACK_SIZE=0x2000
 #	)
 
-target_link_libraries(potwater pico_stdlib pico_cyw43_arch_lwip_threadsafe_background pico_lwip_http)
+target_link_libraries(potwater pico_stdlib pico_cyw43_arch_lwip_threadsafe_background hardware_adc)
+#target_link_libraries(potwater pico_stdlib pico_cyw43_arch_lwip_poll pico_lwip_http)
 pico_enable_stdio_usb(potwater 1)
 pico_enable_stdio_uart(potwater 0)
 

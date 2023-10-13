@@ -5,7 +5,7 @@
 const uint MAX_TIMINGS = 85;
 
 
-void read_temp(dht_reading *result, uint DHT_PIN) {
+void read_temp(struct dht_reading *result, uint DHT_PIN) {
     int data[5] = {0, 0, 0, 0, 0};
     uint last = 1;
     uint j = 0;
