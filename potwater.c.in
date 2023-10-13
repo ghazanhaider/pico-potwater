@@ -43,6 +43,7 @@ struct data_t {
 	ip_addr_t remote_ip;
 	char header[300];			// HTTP header
 	char payload[30];			// Data string payload
+	uint32_t starttime;			// Delay measuring var
 };
 
 
@@ -81,10 +82,6 @@ err_t tcp_connected_callback(void *arg, struct tcp_pcb *tpcb, err_t err) {
 
 // ====== This callback is called once data is fully sent
 err_t tcp_sent_callback(void *arg, struct tcp_pcb *tpcb, u16_t len) {
-/*	if (tcp_close(tpcb) != ERR_OK) {
-		tcp_abort(tpcb);
-	}
-	printf("Connection closed\n");*/
 	puts("sent() called");
 	return ERR_OK;
 }
@@ -109,12 +106,14 @@ err_t tcp_recv_callback(void *arg, struct tcp_pcb *tpcb, struct pbuf * p,err_t e
 			printf("failed, aborting. ");
 			tcp_abort(tpcb);
 			puts("tcp_abort()ed");
+			printf("Total execution time(us): %d\n",time_us_32() - data->starttime);
 			return ERR_ABRT;
 	    }
 		//pbuf_free(p);
 	    puts("tcp_closed()");
 	}
 	//pbuf_free(p);
+	printf("Total execution time(us): %d\n",time_us_32() - data->starttime);
 	return ERR_OK;
 }
 
@@ -200,6 +199,7 @@ int main()
     while (true) {
 	    sleep_until(nextrun);
 	    nextrun = make_timeout_time_ms(TIMER_DELAY);
+		data->starttime = time_us_32();
 		puts("-------------------");
 		puts("Reading onboard_temp");
 	    data->onboard_temp = read_onboard_temp();
@@ -215,6 +215,7 @@ int main()
 	    upload(data);
 		//printf("tcp_listen_pcbs: %d",sizeof(tcp_listen_pcbs));
 		tcp_debug_print_pcbs();
+		printf("Total time in us in loop: %d\n",time_us_32() - data->starttime);
     }
 
 }
