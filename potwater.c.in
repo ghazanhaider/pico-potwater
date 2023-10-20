@@ -32,7 +32,7 @@
 #error AUTH_TOKEN not defined
 #endif
 
-#define TIMER_DELAY 10000	// In milliseconds
+#define TIMER_DELAY 300000	// In milliseconds, 5min
 
 // ============== Config and global variables
 
