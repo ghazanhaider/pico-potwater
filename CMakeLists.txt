@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 add_executable(potwater potwater.c wifi.c temp.c)
-#add_executable(potwater potwater.c wifi.c )
+add_subdirectory(onewire_library)
 
 configure_file(potwater.c.in potwater.c)
 
@@ -28,7 +28,7 @@ target_include_directories(potwater PRIVATE
 #		PICO_STACK_SIZE=0x2000
 #	)
 
-target_link_libraries(potwater pico_stdlib pico_cyw43_arch_lwip_threadsafe_background hardware_adc)
+target_link_libraries(potwater pico_stdlib pico_cyw43_arch_lwip_threadsafe_background hardware_adc hardware_pio onewire_library)
 #target_link_libraries(potwater pico_stdlib pico_cyw43_arch_lwip_poll pico_lwip_http)
 pico_enable_stdio_usb(potwater 1)
 pico_enable_stdio_uart(potwater 0)
