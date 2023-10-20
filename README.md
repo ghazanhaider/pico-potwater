@@ -6,6 +6,10 @@ It adds its internal ADC temp as well to the data.
 A future feature will involve pump transducers to pump in water.
 The measurements and water supply should be charted in influxdb.
 
+DHT: gpio15
+DS18B20: gpio2
+
+
 It is implemented in the tcp raw api instead of http_client which seems to hurt the pico timers for some reason.
 The tcp api lets us do HTTP POST as well which the http_client is not able to do.
 
