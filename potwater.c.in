@@ -37,19 +37,21 @@
 // ============== Config and global variables
 
 #define DHT_PIN 15			// GPIO pin (not board pin)
-#define DS18B20_PIN 2			// GPIO pin (not board pin)
+#define DS18B20_PIN 2		// GPIO pin (not board pin)
 
+#define PAYLOAD_SZ 50		// Max payload buffer size
 
 // Single struct to pass around to callbacks and avoid global variables
 
 struct data_t {
-	float onboard_temp;		// PICO internal temp
+	float onboard_temp;			// PICO internal temp
 	struct dht_reading reading;	// DHT sensor
-	int ds18b20[2];				// DS18B20 sensor probes (max 2)
+	float ds18b20[2];				// DS18B20 sensor probes (max 2)
 	struct tcp_pcb *pcb;		// TCP client pcb
 	ip_addr_t remote_ip;
 	char header[300];			// HTTP header
-	char payload[30];			// Data string payload
+	char payload[PAYLOAD_SZ];	// Data string payload
+	char fmt[8];				// Each formatted point. ",a=12.3\0"=8
 	uint32_t starttime;			// Delay measuring var
 };
 
@@ -75,8 +77,8 @@ float read_onboard_temp(void) {
 // ====== This callback is called once a TCP connection is made
 err_t tcp_connected_callback(void *arg, struct tcp_pcb *tpcb, err_t err) {
 	struct data_t *data = (struct data_t *) arg;
-	int payload_len = snprintf(data->payload, sizeof(data->payload), "potwater t=%.1f,h=%.1f",data->reading.temp_celsius,data->reading.humidity);
-	//printf("Payload len %d is>%s<\n",payload_len,data->payload);
+	int payload_len = strlen(data->payload);
+	printf("Payload len %d is>%s<\n",payload_len,data->payload);
 	int header_len = snprintf(data->header, sizeof(data->header), HTTP_POST_FORMAT(payload_len));
 	cyw43_arch_lwip_begin();
 	tcp_write(tpcb, data->header, header_len, 0x0);
@@ -261,9 +263,12 @@ int main()
 	    nextrun = make_timeout_time_ms(TIMER_DELAY);
 		data->starttime = time_us_32();
 		puts("-------------------");
-		puts("Reading onboard_temp");
+		strcpy(data->payload, "potwater");				// Reset payload string
+		puts("> Reading onboard_temp");
 	    data->onboard_temp = read_onboard_temp();
-		puts("Reading DHT11");
+		snprintf(data->fmt, 8 , " o=%.1f",data->onboard_temp);
+		strlcat(data->payload, data->fmt, PAYLOAD_SZ);
+		puts("> Reading DHT11");
 	    read_temp(&data->reading,DHT_PIN);
 	    if (data->reading.temp_celsius == -111) {
                 puts("DHT Bad Data\n");
@@ -271,8 +276,12 @@ int main()
 		else {
 			printf("DHT Humidity = %.1f%%, Temperature = %.1fC\n",
 					data->reading.humidity, data->reading.temp_celsius);
+			snprintf(data->fmt, 8 , ",h=%.1f",data->reading.humidity);
+	        strlcat(data->payload, data->fmt, PAYLOAD_SZ);
+			snprintf(data->fmt, 8 , ",t=%.1f",data->reading.temp_celsius);
+            strlcat(data->payload, data->fmt, PAYLOAD_SZ);
 	    }
-		puts("Reading DS18B20");
+		puts("> Reading DS18B20");
 /*		one_wire.convert_temperature(null_address, true, true);
 		for (int i = 0; i < count; i++) {
 			auto address = One_wire::get_address(i);
@@ -299,8 +308,14 @@ int main()
             temp = ow_read (&ow) | (ow_read (&ow) << 8);
                 printf ("\t%d: %f", i, temp / 16.0);
 			data->ds18b20[i] = temp / 16.0;
+
+			snprintf(data->fmt, 8 , ",%d=%.1f",i,data->ds18b20[i]);
+	        strlcat(data->payload, data->fmt, PAYLOAD_SZ);
+
         }
         putchar ('\n');
+
+		printf("Payload: %s\n",data->payload);
 
 	    upload(data);
 		//printf("tcp_listen_pcbs: %d",sizeof(tcp_listen_pcbs));
